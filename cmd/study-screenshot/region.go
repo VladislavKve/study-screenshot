@@ -12,17 +12,22 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-// selectRegion — оверлей поверх снимка: выделите мышью, Enter — OK, Esc — отмена.
-func selectRegion(a fyne.App, shot image.Image) image.Rectangle {
+// openRegionSelect shows a fullscreen overlay and returns a channel that receives
+// the chosen rectangle (or empty on cancel). Must not block the Fyne UI thread.
+func openRegionSelect(a fyne.App, shot image.Image) <-chan image.Rectangle {
 	done := make(chan image.Rectangle, 1)
+	var once sync.Once
+	send := func(r image.Rectangle) {
+		once.Do(func() { done <- r })
+	}
 	w := a.NewWindow("Выделите область")
 	w.SetFullScreen(true)
 
 	bg := canvas.NewImageFromImage(shot)
 	bg.FillMode = canvas.ImageFillContain
 	overlay := newDragOverlay(
-		func(r image.Rectangle) { done <- r; w.Close() },
-		func() { done <- image.Rectangle{}; w.Close() },
+		func(r image.Rectangle) { send(r); w.Close() },
+		func() { send(image.Rectangle{}); w.Close() },
 	)
 	w.SetContent(container.NewStack(bg, overlay))
 	w.Canvas().SetOnTypedKey(func(e *fyne.KeyEvent) {
@@ -34,7 +39,7 @@ func selectRegion(a fyne.App, shot image.Image) image.Rectangle {
 		}
 	})
 	w.Show()
-	return <-done
+	return done
 }
 
 type dragOverlay struct {

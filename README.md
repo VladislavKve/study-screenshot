@@ -84,7 +84,7 @@ go run ./cmd/stamptest -sign-url http://127.0.0.1:8830/sign
 3. Нужен ли сразу Mac-тест.
 
 
-## Wayland / GNOME (v0.1.1)
+## Wayland / GNOME (v0.1.2)
 
 На чистом Wayland глобальный **Ctrl+Shift+S** через X11-grab (`golang.design/x/hotkey`) обычно **не работает**.
 
@@ -94,3 +94,5 @@ go run ./cmd/stamptest -sign-url http://127.0.0.1:8830/sign
 - режим `-once` — один снимок и выход (для ярлыка).
 
 Ярлык GNOME: Параметры → Клавиатура → Свои комбинации → команда `study-screenshot -once`, клавиши Ctrl+Shift+S.
+
+v0.1.2: форма и выбор области больше не блокируют UI-поток Fyne (исправлен deadlock «Is Not Responding» после «Снимок»).

@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -27,7 +26,7 @@ import (
 	"study.local/screenshot/internal/sign"
 )
 
-var version = "0.1.1"
+var version = "0.1.2"
 
 const defaultSignURL = "https://77-91-72-31.sslip.io/study-sign/sign"
 
@@ -218,32 +217,24 @@ func (st *AppState) doShoot() {
 	}
 }
 
+// showFormSync shows the form on the Fyne UI thread and waits for the result
+// on this (non-UI) goroutine. Never blocks the UI thread.
 func (st *AppState) showFormSync() formResult {
-	var (
-		res formResult
-		wg  sync.WaitGroup
-	)
-	wg.Add(1)
+	ch := make(chan (<-chan formResult), 1)
 	fyne.Do(func() {
-		defer wg.Done()
-		res = showForm(st.fyne, st.cfg)
+		ch <- openForm(st.fyne, st.cfg)
 	})
-	wg.Wait()
-	return res
+	return <-(<-ch)
 }
 
+// selectRegionSync opens the region overlay on the UI thread and waits for the
+// result off the UI thread.
 func (st *AppState) selectRegionSync(shot image.Image) image.Rectangle {
-	var (
-		r  image.Rectangle
-		wg sync.WaitGroup
-	)
-	wg.Add(1)
+	ch := make(chan (<-chan image.Rectangle), 1)
 	fyne.Do(func() {
-		r = selectRegion(st.fyne, shot)
-		wg.Done()
+		ch <- openRegionSelect(st.fyne, shot)
 	})
-	wg.Wait()
-	return r
+	return <-(<-ch)
 }
 
 func (st *AppState) finish(img *image.RGBA, area []int) error {
