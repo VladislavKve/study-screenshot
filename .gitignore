@@ -1,10 +1,9 @@
 dist/
-server/keys/
-server/keys/**
+server/keys/*
+!server/keys/.gitkeep
 *.seed
 *.key
 *.pem
-!server/keys/.gitkeep
 ref/
 *.exe
 *.syso
