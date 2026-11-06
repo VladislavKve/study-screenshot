@@ -22,10 +22,6 @@ jobs:
             goos: windows
             goarch: amd64
             artifact: StudyScreenshot-windows-amd64.exe
-          - os: macos-13
-            goos: darwin
-            goarch: amd64
-            artifact: study-screenshot-darwin-amd64
           - os: macos-latest
             goos: darwin
             goarch: arm64
