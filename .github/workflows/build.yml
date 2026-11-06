@@ -26,7 +26,7 @@ jobs:
             goos: darwin
             goarch: amd64
             artifact: study-screenshot-darwin-amd64
-          - os: macos-14
+          - os: macos-latest
             goos: darwin
             goarch: arm64
             artifact: study-screenshot-darwin-arm64
@@ -36,18 +36,27 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.23.x"
-      - name: Linux deps
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python deps for tests
+        run: python -m pip install --upgrade pip pillow cryptography
+      - name: Linux GUI deps
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libxxf86vm-dev
       - name: Test
+        env:
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: utf-8
         run: go test ./internal/...
       - name: Build
         env:
           CGO_ENABLED: "1"
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+        shell: bash
         run: |
           mkdir -p dist
           LDFLAGS="-s -w -X main.version=${GITHUB_REF_NAME}"
@@ -55,7 +64,11 @@ jobs:
             LDFLAGS="$LDFLAGS -H windowsgui"
           fi
           go build -ldflags "$LDFLAGS" -o "dist/${{ matrix.artifact }}" ./cmd/study-screenshot
-          (cd dist && sha256sum "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256" || shasum -a 256 "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256")
+          if command -v sha256sum >/dev/null; then
+            (cd dist && sha256sum "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256")
+          else
+            (cd dist && shasum -a 256 "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256")
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

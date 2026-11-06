@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"os"
 	"os/exec"
+	"runtime"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -54,6 +55,9 @@ sys.stdout.write(json.dumps({k:d.get(k) for k in S},ensure_ascii=False,sort_keys
 }
 
 func TestASCIIJSONMatchesPython(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("python console encoding on Windows CI is not UTF-8")
+	}
 	py, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("нет python3")
@@ -194,6 +198,10 @@ func TestStampPNGRoundTrip(t *testing.T) {
 	}
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("нет python3")
+	}
+	// skip if Pillow missing
+	if out, err := exec.Command("python3", "-c", "from PIL import Image").CombinedOutput(); err != nil {
+		t.Skipf("нет Pillow: %v %s", err, out)
 	}
 	out, err := exec.Command("python3", "-c", `import sys,json
 from PIL import Image
