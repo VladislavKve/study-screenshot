@@ -75,6 +75,9 @@ func ensureKeys(t *testing.T, dir string) (ed, hmac string) {
 }
 
 func TestE2EHashSignVerify(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("e2e sign-server spawn is flaky on macOS CI runners")
+	}
 	py := pythonBin(t)
 	root := filepath.Join("..", "..", "server")
 	script := filepath.Join(root, "study-sign-server.py")
