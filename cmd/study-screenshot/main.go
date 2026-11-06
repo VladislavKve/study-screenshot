@@ -27,7 +27,7 @@ import (
 	"study.local/screenshot/internal/sign"
 )
 
-var version = "0.2.0-cross"
+var version = "0.1.1"
 
 const defaultSignURL = "https://77-91-72-31.sslip.io/study-sign/sign"
 
@@ -37,11 +37,14 @@ type AppState struct {
 	busy    atomic.Bool
 	log     *log.Logger
 	signURL string
+	panel   fyne.Window
+	once    bool
 }
 
 func main() {
 	signURLFlag := flag.String("sign-url", "", "URL службы подписи (POST /sign)")
-	once := flag.Bool("once", false, "один снимок без трея (для теста GUI)")
+	once := flag.Bool("once", false, "один снимок и выход (для ярлыка GNOME / теста)")
+	forcePanel := flag.Bool("panel", false, "показать окно с кнопкой «Снимок» (без расчёта на трей)")
 	flag.Parse()
 
 	cfg := platform.LoadConfig()
@@ -54,21 +57,42 @@ func main() {
 	}
 
 	fa := app.NewWithID("study.local.screenshot")
-	st := &AppState{fyne: fa, cfg: cfg, log: openLog(), signURL: url}
-	st.log.Printf("старт %s %s sign=%s", version, runtime.GOOS, url)
+	st := &AppState{fyne: fa, cfg: cfg, log: openLog(), signURL: url, once: *once}
+	st.log.Printf("старт %s %s sign=%s once=%v wayland=%v", version, runtime.GOOS, url, *once, isWaylandSession())
 
 	if *once {
+		// Важно: не вызывать Quit до завершения shootBlocking — иначе fyne.Do зависает.
 		go func() {
-			time.Sleep(200 * time.Millisecond)
-			st.shoot()
-			time.Sleep(500 * time.Millisecond)
-			fa.Quit()
+			time.Sleep(150 * time.Millisecond)
+			st.shootBlocking()
+			fyne.Do(func() { fa.Quit() })
 		}()
 		fa.Run()
 		return
 	}
 
-	go func() { systray.Run(st.onTrayReady, func() {}) }()
+	needPanel := *forcePanel
+	if runtime.GOOS == "linux" && !statusNotifierAvailable() {
+		st.log.Printf("трей: StatusNotifierWatcher не найден — панель с кнопкой «Снимок»")
+		needPanel = true
+	}
+
+	if !needPanel {
+		go func() {
+			trayRunning.Store(true)
+			systray.Run(st.onTrayReady, func() { trayRunning.Store(false) })
+		}()
+	} else {
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			hint := "Нет значка в трее (GNOME). Жмите «Снимок»."
+			if isWaylandSession() {
+				hint += "\nWayland: глобальный Ctrl+Shift+S через X11 не работает.\nЯрлык GNOME → команда: study-screenshot -once"
+			}
+			st.showControlPanel(hint)
+		}()
+	}
+
 	go st.registerHotkey()
 	fa.Run()
 }
@@ -78,6 +102,7 @@ func (st *AppState) onTrayReady() {
 	systray.SetTitle("Скриншот")
 	systray.SetTooltip("Скриншот со штампом — Ctrl+Shift+S")
 	mShoot := systray.AddMenuItem("Сделать снимок", "Ctrl+Shift+S")
+	mPanel := systray.AddMenuItem("Показать панель", "")
 	mOpen := systray.AddMenuItem("Открыть папку снимков", "")
 	systray.AddSeparator()
 	mAbout := systray.AddMenuItem("О программе", "")
@@ -87,12 +112,14 @@ func (st *AppState) onTrayReady() {
 			select {
 			case <-mShoot.ClickedCh:
 				st.shoot()
+			case <-mPanel.ClickedCh:
+				st.showControlPanel("Ctrl+Shift+S или кнопка «Снимок»")
 			case <-mOpen.ClickedCh:
 				_ = openDir(platform.ScreenshotsDir())
 			case <-mAbout.ClickedCh:
 				st.showAbout()
 			case <-mQuit.ClickedCh:
-				systray.Quit()
+				systrayQuitSafe()
 				st.fyne.Quit()
 				return
 			}
@@ -101,82 +128,105 @@ func (st *AppState) onTrayReady() {
 }
 
 func (st *AppState) registerHotkey() {
+	if isWaylandSession() {
+		err := tryPortalGlobalShortcuts(st.log.Printf, func() { st.shoot() })
+		if err != nil {
+			st.log.Printf("hotkey wayland: %v", err)
+		}
+		// X11 grab на чистом Wayland обычно бесполезен — пробуем на случай XWayland
+	}
 	hk := hotkey.New([]hotkey.Modifier{hotkey.ModCtrl, hotkey.ModShift}, hotkey.KeyS)
 	if err := hk.Register(); err != nil {
-		st.log.Printf("hotkey: %v", err)
+		st.log.Printf("hotkey X11/Win: %v", err)
+		if isWaylandSession() {
+			st.log.Printf("подсказка: Настройки → Клавиатура → свои комбинации → Ctrl+Shift+S → study-screenshot -once")
+		}
 		return
 	}
-	st.log.Printf("hotkey Ctrl+Shift+S ок")
+	st.log.Printf("hotkey Ctrl+Shift+S ок (X11/Win/mac)")
 	for range hk.Keydown() {
 		st.shoot()
 	}
 }
 
+// shoot — асинхронный снимок (трей / кнопка / hotkey).
 func (st *AppState) shoot() {
 	if !st.busy.CompareAndSwap(false, true) {
 		return
 	}
 	go func() {
 		defer st.busy.Store(false)
-		res := st.showFormSync()
-		if !res.OK {
-			return
-		}
-		st.cfg.Group = mark.Clean(res.Group, 20)
-		st.cfg.Students = [2]string{mark.Clean(res.S1, 30), mark.Clean(res.S2, 30)}
-		st.cfg.Work = mark.Clean(res.Work, 30)
-		st.cfg.Mode = res.Mode
-		_ = platform.SaveConfig(st.cfg)
-
-		time.Sleep(400 * time.Millisecond)
-		full, err := capture.FullScreen()
-		if err != nil {
-			st.fail("Не удалось сделать снимок", err)
-			return
-		}
-		img := full
-		var area []int
-		switch res.Mode {
-		case "area":
-			r := st.selectRegionSync(full)
-			if r.Empty() {
-				st.alert("Снимок отменён", "Область не выделена.")
-				return
-			}
-			r = r.Intersect(full.Bounds())
-			if r.Dx() < 8 || r.Dy() < 8 {
-				st.fail("Область слишком маленькая", fmt.Errorf("%v", r))
-				return
-			}
-			img = capture.Crop(full, r)
-			area = []int{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}
-		case "window":
-			title, rect, ok := platform.ActiveWindow()
-			if !ok || rect[2] <= 16 || rect[3] <= 16 {
-				st.fail("Активное окно", fmt.Errorf("недоступно на этой ОС или окно слишком маленькое"))
-				return
-			}
-			r := image.Rect(rect[0], rect[1], rect[0]+rect[2], rect[1]+rect[3]).Intersect(full.Bounds())
-			img = capture.Crop(full, r)
-			area = []int{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}
-			_ = title
-		}
-		if err := st.finish(img, area); err != nil {
-			st.fail("Ошибка снимка", err)
-		}
+		st.doShoot()
 	}()
+}
+
+// shootBlocking — для -once: ждёт завершения формы и сохранения.
+func (st *AppState) shootBlocking() {
+	if !st.busy.CompareAndSwap(false, true) {
+		return
+	}
+	defer st.busy.Store(false)
+	st.doShoot()
+}
+
+func (st *AppState) doShoot() {
+	res := st.showFormSync()
+	if !res.OK {
+		return
+	}
+	st.cfg.Group = mark.Clean(res.Group, 20)
+	st.cfg.Students = [2]string{mark.Clean(res.S1, 30), mark.Clean(res.S2, 30)}
+	st.cfg.Work = mark.Clean(res.Work, 30)
+	st.cfg.Mode = res.Mode
+	_ = platform.SaveConfig(st.cfg)
+
+	time.Sleep(400 * time.Millisecond)
+	full, err := capture.FullScreen()
+	if err != nil {
+		st.fail("Не удалось сделать снимок", err)
+		return
+	}
+	img := full
+	var area []int
+	switch res.Mode {
+	case "area":
+		r := st.selectRegionSync(full)
+		if r.Empty() {
+			st.alert("Снимок отменён", "Область не выделена.")
+			return
+		}
+		r = r.Intersect(full.Bounds())
+		if r.Dx() < 8 || r.Dy() < 8 {
+			st.fail("Область слишком маленькая", fmt.Errorf("%v", r))
+			return
+		}
+		img = capture.Crop(full, r)
+		area = []int{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}
+	case "window":
+		title, rect, ok := platform.ActiveWindow()
+		if !ok || rect[2] <= 16 || rect[3] <= 16 {
+			st.fail("Активное окно", fmt.Errorf("недоступно на этой ОС или окно слишком маленькое"))
+			return
+		}
+		r := image.Rect(rect[0], rect[1], rect[0]+rect[2], rect[1]+rect[3]).Intersect(full.Bounds())
+		img = capture.Crop(full, r)
+		area = []int{r.Min.X, r.Min.Y, r.Dx(), r.Dy()}
+		_ = title
+	}
+	if err := st.finish(img, area); err != nil {
+		st.fail("Ошибка снимка", err)
+	}
 }
 
 func (st *AppState) showFormSync() formResult {
 	var (
-		once sync.Once
-		res  formResult
-		wg   sync.WaitGroup
+		res formResult
+		wg  sync.WaitGroup
 	)
 	wg.Add(1)
 	fyne.Do(func() {
-		r := showForm(st.fyne, st.cfg)
-		once.Do(func() { res = r; wg.Done() })
+		defer wg.Done()
+		res = showForm(st.fyne, st.cfg)
 	})
 	wg.Wait()
 	return res
@@ -251,7 +301,11 @@ func (st *AppState) finish(img *image.RGBA, area []int) error {
 		return err
 	}
 	st.log.Printf("снимок id=%s file=%s", m.ID, out)
-	st.alert("Скриншот сохранён", name+"\n"+dir)
+	if !st.once {
+		st.alert("Скриншот сохранён", name+"\n"+dir)
+	} else {
+		st.log.Printf("once: готово %s", out)
+	}
 	return nil
 }
 
@@ -284,6 +338,9 @@ func shortSig(sig string) string {
 
 func (st *AppState) fail(what string, err error) {
 	st.log.Printf("%s: %v", what, err)
+	if st.once {
+		return
+	}
 	st.alert(what, err.Error())
 }
 
@@ -301,7 +358,11 @@ func (st *AppState) alert(title, body string) {
 }
 
 func (st *AppState) showAbout() {
-	st.alert("О программе", fmt.Sprintf("Скриншот Study %s\n%s/%s\nПодпись: Ed25519 через %s", version, runtime.GOOS, runtime.GOARCH, st.signURL))
+	extra := ""
+	if isWaylandSession() {
+		extra = "\nWayland: горячая клавиша — через ярлык GNOME (study-screenshot -once) или кнопку «Снимок»."
+	}
+	st.alert("О программе", fmt.Sprintf("Скриншот Study %s\n%s/%s\nПодпись: Ed25519 через %s%s", version, runtime.GOOS, runtime.GOARCH, st.signURL, extra))
 }
 
 func openLog() *log.Logger {

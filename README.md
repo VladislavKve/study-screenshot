@@ -82,3 +82,15 @@ go run ./cmd/stamptest -sign-url http://127.0.0.1:8830/sign
 1. «да» на включение службы подписи + Caddy на Citadel (или отдельный хост).
 2. ПК преподавателя для теста Windows-сборки.
 3. Нужен ли сразу Mac-тест.
+
+
+## Wayland / GNOME (v0.1.1)
+
+На чистом Wayland глобальный **Ctrl+Shift+S** через X11-grab (`golang.design/x/hotkey`) обычно **не работает**.
+
+Что делает утилита:
+- если нет StatusNotifierWatcher (типичный GNOME) — показывает маленькое окно с кнопкой **«Снимок»** (`-panel` принудительно);
+- захват экрана: kbinani → иначе `gnome-screenshot` / `grim` / portal;
+- режим `-once` — один снимок и выход (для ярлыка).
+
+Ярлык GNOME: Параметры → Клавиатура → Свои комбинации → команда `study-screenshot -once`, клавиши Ctrl+Shift+S.
