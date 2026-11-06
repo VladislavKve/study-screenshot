@@ -47,7 +47,11 @@ except ImportError:
 BASE = os.path.dirname(os.path.abspath(__file__))
 HOST = os.environ.get("STUDY_SIGN_HOST", "127.0.0.1")
 PORT = int(os.environ.get("STUDY_SIGN_PORT", "8830"))
-TZ = ZoneInfo("Europe/Moscow")
+try:
+    TZ = ZoneInfo("Europe/Moscow")
+except Exception:
+    from datetime import timezone, timedelta
+    TZ = timezone(timedelta(hours=3), name="MSK")
 VERIFY_BASE = os.environ.get("STUDY_SIGN_VERIFY_BASE", f"http://{HOST}:{PORT}/verify")
 
 ED25519_PATH = os.environ.get(

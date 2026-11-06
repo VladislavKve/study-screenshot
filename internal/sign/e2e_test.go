@@ -21,12 +21,22 @@ import (
 
 func pythonBin(t *testing.T) string {
 	t.Helper()
+	var cands []string
 	for _, name := range []string{"python3", "python"} {
 		if p, err := exec.LookPath(name); err == nil {
+			cands = append(cands, p)
+		}
+	}
+	for _, p := range cands {
+		cmd := exec.Command(p, "-c", "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey")
+		if cmd.Run() == nil {
 			return p
 		}
 	}
-	t.Skip("нет python3/python")
+	if len(cands) == 0 {
+		t.Skip("нет python3/python")
+	}
+	t.Skip("python без cryptography (pip install cryptography)")
 	return ""
 }
 
