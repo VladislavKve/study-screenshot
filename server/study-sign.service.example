@@ -1,0 +1,21 @@
+# Служба заверения снимков Study Screenshot (QR v5) — только 127.0.0.1:8830, наружу через Caddy /study-sign/*.
+# НЕ установлена: ставить только после «да» (cp в /etc/systemd/system/, systemctl enable --now study-sign).
+[Unit]
+Description=Study Screenshot sign service (127.0.0.1:8830)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/mosi/Documents/studyPCcontrol/deploy/study-sign-server.py
+Environment=STUDY_SIGN_KEY_FILE=/home/mosi/Documents/studyPCcontrol/secrets/sign-srv.key
+Restart=on-failure
+RestartSec=5
+MemoryMax=64M
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=/home/mosi/Documents/studyPCcontrol/secrets/sign-srv.key
+
+[Install]
+WantedBy=multi-user.target

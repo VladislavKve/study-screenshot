@@ -1,0 +1,85 @@
+name: build-study-screenshot
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            artifact: study-screenshot-linux-amd64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            artifact: StudyScreenshot-windows-amd64.exe
+          - os: macos-13
+            goos: darwin
+            goarch: amd64
+            artifact: study-screenshot-darwin-amd64
+          - os: macos-14
+            goos: darwin
+            goarch: arm64
+            artifact: study-screenshot-darwin-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+      - name: Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libxxf86vm-dev
+      - name: Test
+        run: go test ./internal/...
+      - name: Build
+        env:
+          CGO_ENABLED: "1"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p dist
+          LDFLAGS="-s -w -X main.version=${GITHUB_REF_NAME}"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            LDFLAGS="$LDFLAGS -H windowsgui"
+          fi
+          go build -ldflags "$LDFLAGS" -o "dist/${{ matrix.artifact }}" ./cmd/study-screenshot
+          (cd dist && sha256sum "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256" || shasum -a 256 "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/${{ matrix.artifact }}
+            dist/${{ matrix.artifact }}.sha256
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Pack
+        run: |
+          mkdir -p dist
+          find artifacts -type f -exec cp {} dist/ \;
+          ls -lh dist/
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, 'test') || contains(github.ref_name, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

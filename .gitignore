@@ -1,0 +1,17 @@
+dist/
+server/keys/
+server/keys/**
+*.seed
+*.key
+*.pem
+!server/keys/.gitkeep
+ref/
+*.exe
+*.syso
+.idea/
+.vscode/
+*.log
+testdata/out/*.png
+__pycache__/
+*.pyc
+.DS_Store
