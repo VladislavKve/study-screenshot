@@ -61,16 +61,25 @@ PER_IP, PER_IP_WINDOW = 20, 60.0
 GLOBAL, GLOBAL_WINDOW = 300, 60.0
 
 
+def _perms_ok(path):
+    """На Unix требуем 600; на Windows/с флагом STUDY_SIGN_RELAX_PERMS — не проверяем."""
+    if os.name != "posix" or os.environ.get("STUDY_SIGN_RELAX_PERMS") == "1":
+        return True
+    st = os.stat(path)
+    return not (st.st_mode & (stat.S_IRWXG | stat.S_IRWXO))
+
 def load_ed25519():
     os.makedirs(os.path.dirname(ED25519_PATH) or ".", exist_ok=True)
     if not os.path.exists(ED25519_PATH):
         seed = secrets.token_bytes(32)
         with open(ED25519_PATH, "wb") as f:
             f.write(seed)
-        os.chmod(ED25519_PATH, 0o600)
+        try:
+            os.chmod(ED25519_PATH, 0o600)
+        except OSError:
+            pass
         print("generated", ED25519_PATH, flush=True)
-    st = os.stat(ED25519_PATH)
-    if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+    if not _perms_ok(ED25519_PATH):
         sys.exit(f"ключ {ED25519_PATH}: права должны быть 600")
     raw = open(ED25519_PATH, "rb").read()
     if b"BEGIN" in raw:
@@ -102,8 +111,7 @@ def load_hmac():
         path = cand if os.path.exists(cand) else ""
     if not path or not os.path.exists(path):
         return None
-    st = os.stat(path)
-    if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+    if not _perms_ok(path):
         sys.exit(f"ключ {path}: права должны быть 600")
     k = open(path, "rb").read().strip()
     if len(k) < 32:

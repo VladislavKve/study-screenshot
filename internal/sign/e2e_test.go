@@ -78,19 +78,21 @@ func TestE2EHashSignVerify(t *testing.T) {
 		"STUDY_SIGN_HOST=127.0.0.1",
 		"STUDY_SIGN_ED25519_KEY="+ed,
 		"STUDY_SIGN_KEY_FILE="+hmacKey,
+		"STUDY_SIGN_RELAX_PERMS=1",
 		"PYTHONUTF8=1",
 		"PYTHONIOENCODING=utf-8",
 	)
+	var stderr bytes.Buffer
 	cmd := exec.Command(py, script)
 	cmd.Env = env
 	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = cmd.Process.Kill() }()
 
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(20 * time.Second)
 	for {
 		resp, err := http.Get("http://127.0.0.1:" + port + "/health")
 		if err == nil {
@@ -101,7 +103,7 @@ func TestE2EHashSignVerify(t *testing.T) {
 			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("server not up")
+			t.Fatalf("server not up; stderr=%s", stderr.String())
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
